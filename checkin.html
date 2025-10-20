@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Scanner Check-In (Iriun-ready)</title>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/minified/html5-qrcode.min.js"></script>
+  <style>
+    body{font-family:Poppins, sans-serif;background:#34495e;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+    .card{background:#2c3e50;color:#ecf0f1;border-radius:12px;padding:20px;width:100%;max-width:720px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    h1{color:#52c0ff;margin:0 0 10px 0}
+    .controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+    select,input,button{padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.06)}
+    input{background:#13222b;color:#fff}
+    button{background:#2ea0ff;color:#042b33;border:none;cursor:pointer}
+    button.secondary{background:#1b7bbc;color:#fff}
+    #reader{background:#000;border-radius:8px;height:360px;display:flex;align-items:center;justify-content:center;color:#777;margin-bottom:10px}
+    #result{min-height:48px;font-weight:600}
+    .info{color:#f9d66e}.success{color:#2ecc71}.error{color:#ff6b6b}
+    .small{font-size:13px;color:#bfcfd8;margin-top:8px}
+    @media(max-width:700px){#reader{height:260px}}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1><i class="fas fa-qrcode"></i> Check-In Tamu (Scanner)</h1>
+
+    <div class="controls">
+      <button id="promptCameraBtn">Izinkan Kamera / Pilih Kamera</button>
+      <select id="deviceSelect" style="display:none"></select>
+      <button id="useSelectedBtn" style="display:none" class="secondary">Gunakan</button>
+      <button id="startBtn">Start Camera</button>
+      <button id="stopBtn" class="secondary" disabled>Stop</button>
+    </div>
+
+    <div id="reader">Camera preview akan muncul di sini.</div>
+    <div id="result"><p class="info">Menunggu QR Code...</p></div>
+    <div class="small">Jika kamu memakai Iriun: jalankan app Iriun di HP dan driver Iriun di laptop, lalu pilih device bernama "Iriun".</div>
+  </div>
+
+<script>
+/* CONFIG — ganti dengan milikmu */
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbx18419n819tfcZfFQiAzwOkG1wabStxjcG6GJAy25A8AoEKPVRjm4NvItGZdRWaUtkPg/exec'; // apps script exec url
+const CHECKIN_KEY  = 'Xk3!9sT-2025';           // token (sama seperti Script Properties)
+const INVITE_DOMAIN = 'anau23.github.io';
+/* END CONFIG */
+
+const promptCameraBtn = document.getElementById('promptCameraBtn');
+const deviceSelect = document.getElementById('deviceSelect');
+const useSelectedBtn = document.getElementById('useSelectedBtn');
+const startBtn = document.getElementById('startBtn');
+const stopBtn = document.getElementById('stopBtn');
+const readerEl = document.getElementById('reader');
+const resultEl = document.getElementById('result');
+
+let html5QrCode = null;
+let currentDeviceId = null;
+let busy = false;
+const config = { fps: 10, qrbox: { width: 280, height: 280 } };
+
+function setResult(text, kind='info'){
+  resultEl.innerHTML = `<p class="${kind}">${text}</p>`;
+}
+
+// extract guest id
+function extractGuestId(text){
+  try{ const u=new URL(text); return u.searchParams.get('guest') || text; } catch(e){ return text; }
+}
+
+// JSONP call
+function checkInGuestJSONP(guestId){
+  return new Promise((resolve,reject)=>{
+    const cb = 'cb_' + Date.now() + '_' + Math.floor(Math.random()*1000);
+    window[cb] = function(data){
+      const s=document.getElementById(cb+'_script'); if(s) s.remove();
+      try{ delete window[cb]; }catch(e){}
+      resolve(data);
+    };
+    const sourceValue = INVITE_DOMAIN || window.location.hostname;
+    const params = [
+      'action=checkin',
+      'id='+encodeURIComponent(guestId),
+      'callback='+encodeURIComponent(cb),
+      'key='+encodeURIComponent(CHECKIN_KEY),
+      'source='+encodeURIComponent(sourceValue)
+    ].join('&');
+    const url = BACKEND_URL + '?' + params;
+    console.log('JSONP URL:', url);
+    const script = document.createElement('script');
+    script.id = cb + '_script';
+    script.src = url;
+    script.onerror = function(){ try{ delete window[cb]; }catch(e){} if(script) script.remove(); reject(new Error('Script load error')); };
+    document.body.appendChild(script);
+  });
+}
+
+/* scan success */
+async function onScanSuccess(decodedText){
+  if(busy) return;
+  busy = true;
+  setResult('QR terbaca: ' + (decodedText.length>80?decodedText.slice(0,80)+'...':decodedText),'info');
+  const guestId = extractGuestId(decodedText);
+  console.log('Extract guestId:', guestId);
+
+  try { await html5QrCode.stop(); } catch(e){ console.warn(e); }
+
+  setResult('Mengirim check-in untuk: ' + guestId, 'info');
+  try{
+    const data = await checkInGuestJSONP(guestId);
+    console.log('Server:', data);
+    if(data && data.success){
+      setResult('Check-in berhasil: ' + data.name, 'success');
+      playSuccessSound();
+    } else {
+      setResult(data && data.error ? data.error : 'Gagal check-in','error');
+      playErrorSound();
+    }
+  } catch(err) {
+    console.error(err);
+    setResult('Gagal terhubung ke server.', 'error');
+    playErrorSound();
+  }
+
+  // restart scanner after small delay
+  setTimeout(async ()=>{
+    try {
+      if(currentDeviceId){
+        await html5QrCode.start({ deviceId: { exact: currentDeviceId } }, config, onScanSuccess, ()=>{});
+      } else {
+        await html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, ()=>{});
+      }
+      setResult('<span class="info">Menunggu QR Code...</span>');
+    } catch(e) {
+      console.warn(e);
+      setResult('Tidak dapat mengakses kamera. Periksa izin dan coba reload.', 'error');
+    } finally { busy=false; }
+  }, 2000);
+}
+
+/* util sounds */
+function playSuccessSound(){ try{ new Audio('https://assets.mixkit.co/active_storage/sfx/2568/sfx-confirmation.wav').play().catch(()=>{}); }catch(e){} }
+function playErrorSound(){ try{ new Audio('https://assets.mixkit.co/active_storage/sfx/2569/sfx-alert.wav').play().catch(()=>{}); }catch(e){} }
+
+/* prompt & list devices (panggil ini saat tombol Izinkan diklik) */
+async function promptAndListDevices(){
+  try {
+    // memicu permission prompt
+    await navigator.mediaDevices.getUserMedia({ video: true });
+  } catch(err){
+    console.warn('getUserMedia error', err);
+    setResult('Izin kamera ditolak atau tidak tersedia.', 'error');
+    return;
+  }
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cams = devices.filter(d=>d.kind === 'videoinput');
+    if(!cams || cams.length === 0){ setResult('Tidak ada kamera yang terdeteksi setelah izin.', 'error'); return; }
+
+    deviceSelect.innerHTML = '';
+    cams.forEach((d,i)=>{
+      const opt = document.createElement('option');
+      opt.value = d.deviceId;
+      opt.text = d.label || ('Camera ' + (i+1));
+      deviceSelect.appendChild(opt);
+    });
+    deviceSelect.style.display = 'inline-block';
+    useSelectedBtn.style.display = 'inline-block';
+    setResult('Pilih kamera lalu klik "Gunakan".', 'info');
+
+    // auto-select Iriun bila ada label mengandung "iriun"
+    const lower = Array.from(deviceSelect.options).map(o=> (o.text||'').toLowerCase());
+    const idx = lower.findIndex(t => t.includes('iriun'));
+    if(idx >= 0){
+      deviceSelect.selectedIndex = idx;
+      setResult('Iriun terdeteksi. Klik "Gunakan" untuk memakai Iriun.', 'info');
+    }
+  } catch(e){
+    console.error('enumerateDevices error', e);
+    setResult('Gagal mengambil daftar kamera.', 'error');
+  }
+}
+
+/* use selected device */
+useSelectedBtn.addEventListener('click', async ()=>{
+  currentDeviceId = deviceSelect.value;
+  setResult('Menggunakan kamera terpilih...', 'info');
+  // start scanner with that device
+  try {
+    if(!html5QrCode) html5QrCode = new Html5Qrcode('reader');
+    await html5QrCode.start({ deviceId: { exact: currentDeviceId } }, config, onScanSuccess, ()=>{});
+    setResult('<span class="info">Menunggu QR Code...</span>');
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+  } catch(e){
+    console.error('start with device failed', e);
+    setResult('Gagal memulai kamera terpilih. Coba pilih yang lain atau reload.', 'error');
+  }
+});
+
+/* start & stop buttons */
+startBtn.addEventListener('click', async ()=>{
+  try {
+    if(!html5QrCode) html5QrCode = new Html5Qrcode('reader');
+    if(currentDeviceId){
+      await html5QrCode.start({ deviceId: { exact: currentDeviceId } }, config, onScanSuccess, ()=>{});
+    } else {
+      await html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, ()=>{});
+    }
+    setResult('<span class="info">Menunggu QR Code...</span>');
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+  } catch(e){
+    console.error('start failed', e);
+    setResult('Tidak dapat mengakses kamera. Pastikan izin diberikan & perangkat tersedia.', 'error');
+  }
+});
+stopBtn.addEventListener('click', async ()=>{
+  try { if(html5QrCode) await html5QrCode.stop(); } catch(e){ console.warn(e); }
+  startBtn.disabled = false; stopBtn.disabled = true;
+  setResult('Scanner dihentikan.', 'info');
+});
+
+/* handler prompt button */
+promptCameraBtn.addEventListener('click', promptAndListDevices);
+
+/* init: create instance but don't auto-start (we use manual flow) */
+(function init(){
+  html5QrCode = new Html5Qrcode('reader');
+  setResult('<span class="info">Klik "Izinkan Kamera / Pilih Kamera" lalu pilih Iriun (jika muncul).</span>');
+})();
+</script>
+</body>
+</html>
