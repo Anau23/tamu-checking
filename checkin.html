@@ -1,164 +1,143 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="id">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>Sistem Check-In Tamu (Scanner Otomatis)</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Check-In Tamu (Scanner)</title>
 
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
-    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 
-    <style>
-        body { font-family: 'Poppins', sans-serif; background: #34495e; display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0; }
-        .container { background:#2c3e50;padding:30px;border-radius:12px;box-shadow:0 12px 30px rgba(0,0,0,.2);text-align:center;max-width:640px;width:94%;color:#ecf0f1 }
-        h1{color:#3498db;margin:0 0 8px}
-        p.small{color:#bdc3c7;margin-top:0;margin-bottom:14px}
-        #reader{width:100%;max-width:520px;margin:18px auto;border-radius:10px;overflow:hidden;border:2px solid #2ea0ff;height:360px;background:#000}
-        #result{margin-top:18px;font-size:1.05rem;font-weight:600;min-height:56px}
-        .success{color:#2ecc71}.error{color:#ff6b6b}.info{color:#f39c12}
-        .scanning-text{color:#bdc3c7;font-style:italic}
-        .spinner{display:inline-block;width:34px;height:34px;border-radius:50%;border:4px solid rgba(255,255,255,0.08);border-top-color:#2ea0ff;animation:spin 1s linear infinite}
-        @keyframes spin{to{transform:rotate(360deg)}}
-    </style>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#2b3b47;font-family:Poppins,system-ui,-apple-system,Segoe UI,Roboto,Arial;color:#ecf0f1}
+  .card{width:100%;max-width:820px;padding:36px;border-radius:14px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.03));box-shadow:0 18px 40px rgba(0,0,0,0.35);text-align:center}
+  h1{margin:0 0 6px;font-size:30px;color:#2ea0ff}
+  p.lead{margin:0 0 18px;color:#bcd4db}
+  #reader{width:100%;max-width:560px;height:420px;margin:18px auto;border-radius:10px;overflow:hidden;background:#000;border:3px solid rgba(46,160,255,0.12)}
+  #status{margin-top:18px;font-weight:600;min-height:28px}
+  .scanning{color:#c5d4da;font-style:italic}
+  .success{color:#2ecc71}
+  .error{color:#ff6b6b}
+  .spinner{width:36px;height:36px;border-radius:50%;border:4px solid rgba(255,255,255,0.06);border-top-color:#2ea0ff;animation:spin 1s linear infinite;display:inline-block;vertical-align:middle}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
 </head>
 <body>
-    <div class="container">
-        <h1><i class="fas fa-qrcode"></i> Check-In Tamu Syukuran</h1>
-        <p class="small">Arahkan QR Code ke kamera untuk check-in otomatis. (Jika QR berisi link, sistem akan ambil parameter <code>guest</code>.)</p>
+  <div class="card">
+    <h1><i class="fas fa-qrcode"></i> Check-In Tamu Syukuran</h1>
+    <p class="lead">Arahkan QR Code ke kamera. (Popup izin kamera akan muncul.)</p>
 
-        <div id="reader"></div>
+    <div id="reader" aria-live="polite"></div>
 
-        <div id="result"><p class="scanning-text">Menunggu QR Code...</p></div>
-    </div>
+    <div id="status"><span class="scanning">Menunggu QR Code...</span></div>
+  </div>
 
 <script>
-/* ================= CONFIG - ganti kalau perlu ================= */
-// URL Web App Apps Script (deploy web app "Anyone, even anonymous")
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzQGI4FovddaKryGQcEWiNEEss3dyd5egMI7VCoAFMhOwAPY6X95ybzQyaOI5n1GYuJ1A/exec';
-// Token rahasia (harus sama dengan Script Properties di Apps Script)
+/* ========== CONFIG (ganti jika perlu) ========== */
+const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzFB_lU3eSpTodI8t9xDy4ES3iveaxzbJqItBN2MdcGYX0LlTOwEOJufmHzQnVjFB85WA/exec';
 const CHECKIN_KEY = 'Xk3!9sT-2025';
-// Domain GitHub Pages host (hostname saja)
 const INVITE_DOMAIN = 'anau23.github.io';
-/* ============================================================ */
+/* ============================================== */
 
-const resultDiv = document.getElementById('result');
+const statusEl = document.getElementById('status');
+const readerId = "reader";
 
-// jika decodedText adalah URL penuh, ambil param guest; kalau bukan, pakai langsung
-function extractGuestId(decodedText) {
-    try {
-        const u = new URL(decodedText);
-        const g = u.searchParams.get('guest');
-        return g ? g : decodedText;
-    } catch (e) {
-        // not a URL -> treat as id
-        return decodedText;
+// helper UI
+function setStatus(text, cls='') {
+  statusEl.className = cls;
+  statusEl.innerHTML = text;
+}
+function shortSuccess(name){
+  setStatus(`<span class="success">Selamat datang, ${escapeHtml(name)}!</span>`);
+  // kembali ke waiting state after 1.8s
+  setTimeout(()=> setStatus(`<span class="scanning">Menunggu QR Code...</span>`), 1800);
+}
+function shortError(msg){
+  setStatus(`<span class="error">⚠️ ${escapeHtml(msg)}</span>`);
+  setTimeout(()=> setStatus(`<span class="scanning">Menunggu QR Code...</span>`), 2000);
+}
+function escapeHtml(s){ if(!s) return ''; return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]); }
+
+/* extract guest id: if decodedText is URL, take param 'guest', else use as id */
+function extractGuestId(decodedText){
+  try{
+    const u = new URL(decodedText);
+    return u.searchParams.get('guest') || decodedText;
+  }catch(e){
+    return decodedText;
+  }
+}
+
+/* scan handlers */
+function onScanSuccess(decodedText, decodedResult){
+  // prevent rapid double-scan
+  if (window._scanningBusy) return;
+  window._scanningBusy = true;
+
+  const guestId = String(extractGuestId(decodedText)).trim();
+  if(!guestId){
+    shortError('QR tidak mengandung ID tamu');
+    window._scanningBusy = false;
+    return;
+  }
+
+  setStatus('<span class="scanning"><span class="spinner"></span> Memproses check-in...</span>');
+
+  // JSONP call to Apps Script (bypass CORS)
+  const cb = 'cb_' + Date.now() + '_' + Math.floor(Math.random()*1000);
+  window[cb] = function(data){
+    document.getElementById(cb + '_script')?.remove();
+    try{ delete window[cb]; } catch(e){}
+    if(data && data.success){
+      // success
+      try { new Audio('https://assets.mixkit.co/active_storage/sfx/2568/sfx-confirmation.wav').play(); } catch(e){}
+      shortSuccess(data.name);
+    } else {
+      try { new Audio('https://assets.mixkit.co/active_storage/sfx/2569/sfx-alert.wav').play(); } catch(e){}
+      shortError(data && data.error ? data.error : 'Gagal check-in');
     }
+    // stop busy and restart scanning after short delay
+    setTimeout(()=> { window._scanningBusy = false; }, 1400);
+  };
+
+  const script = document.createElement('script');
+  script.id = cb + '_script';
+  script.src = `${BACKEND_URL}?action=checkin&id=${encodeURIComponent(guestId)}&callback=${cb}&key=${encodeURIComponent(CHECKIN_KEY)}&source=${encodeURIComponent(INVITE_DOMAIN)}`;
+  script.onerror = function(){
+    shortError('Tidak dapat terhubung ke server.');
+    try{ delete window[cb]; }catch(e){}
+    script.remove();
+    window._scanningBusy = false;
+  };
+  document.body.appendChild(script);
 }
 
-// saat QR berhasil dibaca
-function onScanSuccess(decodedText, decodedResult) {
-    const guestId = extractGuestId(decodedText).trim();
-    if (!guestId) {
-        resultDiv.innerHTML = `<p class="error">QR tidak mengandung ID tamu.</p>`;
-        playErrorSound();
-        return;
-    }
-    // jalankan check-in via JSONP
-    doCheckinJSONP(guestId);
+function onScanFailure(error){
+  // ignore
 }
 
-// on failure: abaikan (akan terus scan)
-function onScanFailure(errorMessage) {
-    // silence
-}
-
-// inisialisasi html5-qrcode
-const html5QrCode = new Html5Qrcode("reader");
+/* start scanner */
+const html5QrCode = new Html5Qrcode(readerId);
 const config = { fps: 10, qrbox: { width: 250, height: 250 } };
 
+// try to start camera (this triggers browser permission prompt)
 html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, onScanFailure)
-    .then(() => {
-        // started
-    })
-    .catch((err) => {
-        resultDiv.innerHTML = `<p class="error">Tidak dapat mengakses kamera. Pastikan izin diberikan dan kamera tidak dipakai aplikasi lain.</p>`;
-        console.error('Unable to start scanning, error:', err);
-    });
+  .then(() => {
+    // started ok
+  })
+  .catch(err => {
+    console.error('start error', err);
+    setStatus('<span class="error">Tidak dapat mengakses kamera. Pastikan izin diberikan dan kamera tidak dipakai aplikasi lain.</span>');
+  });
 
-// JSONP helper: panggil Apps Script dengan callback untuk hindari CORS
-function doCheckinJSONP(id) {
-    // tampil loading
-    resultDiv.innerHTML = `<div style="display:flex;gap:12px;align-items:center;justify-content:center"><div class="spinner" aria-hidden="true"></div><div>Memproses check-in...</div></div>`;
-
-    return new Promise((resolve, reject) => {
-        const cbName = 'cb_' + Date.now() + '_' + Math.floor(Math.random()*1000);
-        // attach callback
-        window[cbName] = function(data) {
-            // cleanup
-            const s = document.getElementById(cbName + '_script');
-            if (s) s.remove();
-            try { delete window[cbName]; } catch(e) {}
-
-            // handle response
-            if (data && data.success) {
-                resultDiv.innerHTML = `<p class="success"><i class="fas fa-check-circle"></i> Selamat datang, ${escapeHtml(data.name)}!</p>`;
-                playSuccessSound();
-            } else {
-                const errMsg = data && data.error ? data.error : 'Gagal check-in';
-                resultDiv.innerHTML = `<p class="error"><i class="fas fa-exclamation-triangle"></i> ${escapeHtml(errMsg)}</p>`;
-                playErrorSound();
-            }
-            resolve(data);
-        };
-
-        // build script src
-        const sourceValue = INVITE_DOMAIN || window.location.hostname;
-        const script = document.createElement('script');
-        script.id = cbName + '_script';
-        // encodeURIComponent for safety; callback param must be function name (no encoding)
-        script.src = `${BACKEND_URL}?action=checkin&id=${encodeURIComponent(id)}&callback=${cbName}&key=${encodeURIComponent(CHECKIN_KEY)}&source=${encodeURIComponent(sourceValue)}`;
-        script.onerror = function() {
-            resultDiv.innerHTML = `<p class="error">Gagal terhubung ke server. Periksa koneksi internet atau deployment Apps Script.</p>`;
-            try { delete window[cbName]; } catch(e){}
-            script.remove();
-            reject(new Error('Script load error'));
-        };
-        // append to body to execute
-        document.body.appendChild(script);
-    }).then(() => {
-        // hentikan scanning sementara untuk mencegah double-scan
-        return html5QrCode.stop().then(() => {
-            // restart setelah jeda 2.5s
-            setTimeout(() => {
-                resultDiv.innerHTML = `<p class="scanning-text">Menunggu QR Code berikutnya...</p>`;
-                html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, onScanFailure)
-                    .catch((err) => {
-                        console.error('Restart scanning failed:', err);
-                        resultDiv.innerHTML = `<p class="error">Gagal memulai ulang kamera.</p>`;
-                    });
-            }, 2500);
-        }).catch(err => {
-            console.error('Stop scanning failed:', err);
-        });
-    }).catch(err => {
-        console.error(err);
-    });
-}
-
-// suara
-function playSuccessSound() {
-    try { new Audio('https://assets.mixkit.co/active_storage/sfx/2568/sfx-confirmation.wav').play(); } catch(e){}
-}
-function playErrorSound() {
-    try { new Audio('https://assets.mixkit.co/active_storage/sfx/2569/sfx-alert.wav').play(); } catch(e){}
-}
-
-// small escaping helper for safety
-function escapeHtml(s) {
-    if (!s) return '';
-    return String(s).replace(/[&<>"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[m]; });
-}
+// ensure page keeps scanning: if scanner stopped unexpectedly, attempt restart after small delay
+window.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    // restart if needed
+    html5QrCode.getState?.(); // no-op but helps sometimes
+  }
+});
 </script>
 </body>
 </html>
